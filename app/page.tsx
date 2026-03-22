@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback, useEffect } from "react";
 import RouletteWheel, { RouletteWheelHandle } from "@/components/RouletteWheel";
 import BettingTable from "@/components/BettingTable";
 import ChipSelector from "@/components/ChipSelector";
 import RouletteHistory from "@/components/RouletteHistory";
 import WinNotification from "@/components/WinNotification";
+import AdminDashboard from "@/components/AdminDashboard";
 import { ChipPlacement, calculatePayout, calculateTotalBet, spinWheel } from "@/lib/roulette";
 
 const STARTING_BALANCE = 1000;
@@ -27,11 +28,23 @@ export default function Home() {
   const [lastResult, setLastResult] = useState<{ win: number; bet: number; number: number } | null>(null);
   const [lastBets, setLastBets] = useState<ChipPlacement[]>([]);
 
+  // Admin state
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [forceNextNumber, setForceNextNumber] = useState<number | null>(null);
+  const [infiniteBalance, setInfiniteBalance] = useState(false);
+  const [autoWin, setAutoWin] = useState(false);
+
+  // Expose window.admin() for DevTools console
+  useEffect(() => {
+    (window as Window & { admin: () => void }).admin = () => setShowAdmin(true);
+    return () => { delete (window as Window & { admin?: () => void }).admin; };
+  }, []);
+
   const totalBet = calculateTotalBet(bets);
 
   const handleBet = useCallback((placement: ChipPlacement) => {
     if (isSpinning) return;
-    if (placement.amount > balance - totalBet) return;
+    if (!infiniteBalance && placement.amount > balance - totalBet) return;
 
     setBets((prev) => {
       const existing = prev.find((b) => b.betKey === placement.betKey);
@@ -44,12 +57,21 @@ export default function Home() {
       }
       return [...prev, placement];
     });
-  }, [isSpinning, balance, totalBet]);
+  }, [isSpinning, balance, totalBet, infiniteBalance]);
 
   const handleSpin = useCallback(() => {
     if (isSpinning || bets.length === 0) return;
 
-    const winning = spinWheel();
+    let winning: number;
+    if (forceNextNumber !== null) {
+      winning = forceNextNumber;
+      setForceNextNumber(null);
+    } else if (autoWin && bets.length > 0) {
+      winning = bets[0].numbers[0];
+    } else {
+      winning = spinWheel();
+    }
+
     setWinningNumber(null);
     setIsSpinning(true);
     setLastBets(bets);
@@ -61,13 +83,17 @@ export default function Home() {
       const winAmount = calculatePayout(bets, winning);
       const betTotal = calculateTotalBet(bets);
 
-      setBalance((prev) => prev - betTotal + winAmount);
+      if (infiniteBalance) {
+        setBalance((prev) => prev + winAmount);
+      } else {
+        setBalance((prev) => prev - betTotal + winAmount);
+      }
       setHistory((prev) => [...prev, { number: winning, timestamp: Date.now() }]);
       setLastResult({ win: winAmount, bet: betTotal, number: winning });
       setShowNotification(true);
       setBets([]);
     });
-  }, [isSpinning, bets]);
+  }, [isSpinning, bets, forceNextNumber, autoWin, infiniteBalance]);
 
   const handleClearBets = useCallback(() => {
     if (!isSpinning) setBets([]);
@@ -82,17 +108,25 @@ export default function Home() {
   const handleRebet = useCallback(() => {
     if (isSpinning || lastBets.length === 0) return;
     const rebetTotal = calculateTotalBet(lastBets);
-    if (rebetTotal > balance) return;
+    if (!infiniteBalance && rebetTotal > balance) return;
     setBets(lastBets);
-  }, [isSpinning, lastBets, balance]);
+  }, [isSpinning, lastBets, balance, infiniteBalance]);
 
   const handleDoubleBet = useCallback(() => {
     if (isSpinning || bets.length === 0) return;
     const doubled = bets.map((b) => ({ ...b, amount: b.amount * 2 }));
     const newTotal = calculateTotalBet(doubled);
-    if (newTotal > balance) return;
+    if (!infiniteBalance && newTotal > balance) return;
     setBets(doubled);
-  }, [isSpinning, bets, balance]);
+  }, [isSpinning, bets, balance, infiniteBalance]);
+
+  const handleSetBalance = useCallback((amount: number) => {
+    setBalance(amount);
+  }, []);
+
+  const handleClearHistory = useCallback(() => {
+    setHistory([]);
+  }, []);
 
   const handleReset = useCallback(() => {
     setBalance(STARTING_BALANCE);
@@ -104,7 +138,7 @@ export default function Home() {
     setLastResult(null);
   }, []);
 
-  const canSpin = !isSpinning && bets.length > 0 && totalBet <= balance;
+  const canSpin = !isSpinning && bets.length > 0 && (infiniteBalance || totalBet <= balance);
 
   return (
     <main
@@ -380,6 +414,24 @@ export default function Home() {
       <div style={{ marginTop: 40, fontSize: 11, color: "rgba(255,255,255,0.2)", textAlign: "center", letterSpacing: 1 }}>
         For entertainment purposes only · No real money involved
       </div>
+
+      <AdminDashboard
+        isOpen={showAdmin}
+        onClose={() => setShowAdmin(false)}
+        balance={balance}
+        isSpinning={isSpinning}
+        onSetBalance={handleSetBalance}
+        onSetForceNumber={setForceNextNumber}
+        forceNumber={forceNextNumber}
+        infiniteBalance={infiniteBalance}
+        onToggleInfiniteBalance={() => setInfiniteBalance((v) => !v)}
+        autoWin={autoWin}
+        onToggleAutoWin={() => setAutoWin((v) => !v)}
+        onClearHistory={handleClearHistory}
+        onResetGame={handleReset}
+        history={history}
+        bets={bets}
+      />
     </main>
   );
 }
