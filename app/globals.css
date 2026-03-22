@@ -58,6 +58,11 @@ body {
   to { transform: rotate(360deg); }
 }
 
+@keyframes lobbyPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px #22c55e; }
+  50% { opacity: 0.6; box-shadow: 0 0 16px #22c55e; }
+}
+
 @keyframes ballOrbit {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }

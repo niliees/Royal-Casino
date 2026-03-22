@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Royal Roulette",
-  description: "A realistic European roulette game",
+  title: "Royal Casino",
+  description: "Premium online casino — Roulette, Blackjack, Slots and more",
 };
 
 export default function RootLayout({

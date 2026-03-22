@@ -1,437 +1,380 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect } from "react";
-import RouletteWheel, { RouletteWheelHandle } from "@/components/RouletteWheel";
-import BettingTable from "@/components/BettingTable";
-import ChipSelector from "@/components/ChipSelector";
-import RouletteHistory from "@/components/RouletteHistory";
-import WinNotification from "@/components/WinNotification";
-import AdminDashboard from "@/components/AdminDashboard";
-import { ChipPlacement, calculatePayout, calculateTotalBet, spinWheel } from "@/lib/roulette";
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import AdminPanel from "@/components/AdminPanel";
+import { loadBalance, saveBalance, STARTING_BALANCE } from "@/lib/balance";
 
-const STARTING_BALANCE = 1000;
 
-interface HistoryEntry {
-  number: number;
-  timestamp: number;
+interface GameCard {
+  title: string;
+  description: string;
+  icon: string;
+  href: string;
+  available: boolean;
+  badge?: string;
+  color: string;
 }
 
+const GAMES: GameCard[] = [
+  { title: "Roulette", description: "European Single Zero. Place your bets and spin the wheel of fortune.", icon: "⊙", href: "/games/roulette", available: true, badge: "LIVE", color: "#c9a84c" },
+  { title: "Blackjack", description: "Beat the dealer to 21 without busting. Classic card game.", icon: "♠", href: "/games/blackjack", available: true, badge: "NEW", color: "#60a5fa" },
+  { title: "Slots", description: "Spin three reels and match symbols. How big can you win?", icon: "★", href: "/games/slots", available: true, badge: "NEW", color: "#f472b6" },
+  { title: "Poker", description: "Video Poker - Jacks or Better. Hold your cards and draw to win.", icon: "♣", href: "/games/poker", available: true, badge: "NEW", color: "#a78bfa" },
+  { title: "Crash", description: "Watch the multiplier rise - cash out before it crashes!", icon: "↗", href: "/games/crash", available: true, badge: "NEW", color: "#fb923c" },
+];
+
 export default function Home() {
-  const wheelRef = useRef<RouletteWheelHandle>(null);
-  const [balance, setBalance] = useState(STARTING_BALANCE);
-  const [bets, setBets] = useState<ChipPlacement[]>([]);
-  const [selectedChip, setSelectedChip] = useState(10);
-  const [isSpinning, setIsSpinning] = useState(false);
-  const [winningNumber, setWinningNumber] = useState<number | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [showNotification, setShowNotification] = useState(false);
-  const [lastResult, setLastResult] = useState<{ win: number; bet: number; number: number } | null>(null);
-  const [lastBets, setLastBets] = useState<ChipPlacement[]>([]);
-
-  // Admin state
   const [showAdmin, setShowAdmin] = useState(false);
-  const [forceNextNumber, setForceNextNumber] = useState<number | null>(null);
-  const [infiniteBalance, setInfiniteBalance] = useState(false);
-  const [autoWin, setAutoWin] = useState(false);
+  const [lobbyBalance, setLobbyBalance] = useState(STARTING_BALANCE);
 
-  // Expose window.admin() for DevTools console
   useEffect(() => {
-    (window as Window & { admin: () => void }).admin = () => setShowAdmin(true);
-    return () => { delete (window as Window & { admin?: () => void }).admin; };
+    window.admin = () => {
+      setLobbyBalance(loadBalance());
+      setShowAdmin(true);
+    };
+    return () => { window.admin = undefined; };
   }, []);
-
-  const totalBet = calculateTotalBet(bets);
-
-  const handleBet = useCallback((placement: ChipPlacement) => {
-    if (isSpinning) return;
-    if (!infiniteBalance && placement.amount > balance - totalBet) return;
-
-    setBets((prev) => {
-      const existing = prev.find((b) => b.betKey === placement.betKey);
-      if (existing) {
-        return prev.map((b) =>
-          b.betKey === placement.betKey
-            ? { ...b, amount: b.amount + placement.amount }
-            : b
-        );
-      }
-      return [...prev, placement];
-    });
-  }, [isSpinning, balance, totalBet, infiniteBalance]);
-
-  const handleSpin = useCallback(() => {
-    if (isSpinning || bets.length === 0) return;
-
-    let winning: number;
-    if (forceNextNumber !== null) {
-      winning = forceNextNumber;
-      setForceNextNumber(null);
-    } else if (autoWin && bets.length > 0) {
-      winning = bets[0].numbers[0];
-    } else {
-      winning = spinWheel();
-    }
-
-    setWinningNumber(null);
-    setIsSpinning(true);
-    setLastBets(bets);
-
-    wheelRef.current?.spin(winning, () => {
-      setWinningNumber(winning);
-      setIsSpinning(false);
-
-      const winAmount = calculatePayout(bets, winning);
-      const betTotal = calculateTotalBet(bets);
-
-      if (infiniteBalance) {
-        setBalance((prev) => prev + winAmount);
-      } else {
-        setBalance((prev) => prev - betTotal + winAmount);
-      }
-      setHistory((prev) => [...prev, { number: winning, timestamp: Date.now() }]);
-      setLastResult({ win: winAmount, bet: betTotal, number: winning });
-      setShowNotification(true);
-      setBets([]);
-    });
-  }, [isSpinning, bets, forceNextNumber, autoWin, infiniteBalance]);
-
-  const handleClearBets = useCallback(() => {
-    if (!isSpinning) setBets([]);
-  }, [isSpinning]);
-
-  const handleUndoBet = useCallback(() => {
-    if (!isSpinning && bets.length > 0) {
-      setBets((prev) => prev.slice(0, -1));
-    }
-  }, [isSpinning, bets]);
-
-  const handleRebet = useCallback(() => {
-    if (isSpinning || lastBets.length === 0) return;
-    const rebetTotal = calculateTotalBet(lastBets);
-    if (!infiniteBalance && rebetTotal > balance) return;
-    setBets(lastBets);
-  }, [isSpinning, lastBets, balance, infiniteBalance]);
-
-  const handleDoubleBet = useCallback(() => {
-    if (isSpinning || bets.length === 0) return;
-    const doubled = bets.map((b) => ({ ...b, amount: b.amount * 2 }));
-    const newTotal = calculateTotalBet(doubled);
-    if (!infiniteBalance && newTotal > balance) return;
-    setBets(doubled);
-  }, [isSpinning, bets, balance, infiniteBalance]);
-
-  const handleSetBalance = useCallback((amount: number) => {
-    setBalance(amount);
-  }, []);
-
-  const handleClearHistory = useCallback(() => {
-    setHistory([]);
-  }, []);
-
-  const handleReset = useCallback(() => {
-    setBalance(STARTING_BALANCE);
-    setBets([]);
-    setLastBets([]);
-    setHistory([]);
-    setWinningNumber(null);
-    setShowNotification(false);
-    setLastResult(null);
-  }, []);
-
-  const canSpin = !isSpinning && bets.length > 0 && (infiniteBalance || totalBet <= balance);
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "linear-gradient(160deg, #0a1628 0%, #0d1f3c 50%, #0a1628 100%)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        padding: "20px 16px 40px",
-      }}
-    >
-      {/* Header */}
-      <div style={{ textAlign: "center", marginBottom: 20, width: "100%" }}>
-        <div style={{ display: "inline-block", position: "relative" }}>
-          <h1 style={{
-            fontSize: "clamp(28px, 5vw, 52px)",
-            fontWeight: "bold",
-            margin: 0,
-            letterSpacing: 6,
-            textTransform: "uppercase",
-            background: "linear-gradient(90deg, #8b6914, #f0d878, #c9a84c, #f0d878, #8b6914)",
-            backgroundSize: "200% auto",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            backgroundClip: "text",
-            animation: "shimmer 3s linear infinite",
-          }}>
-            Royal Roulette
-          </h1>
-          <div style={{ height: 1, background: "linear-gradient(90deg, transparent, #c9a84c, transparent)", marginTop: 4 }} />
-          <div style={{ fontSize: 11, color: "rgba(201,168,76,0.6)", letterSpacing: 8, marginTop: 6, textTransform: "uppercase" }}>
-            European · Single Zero
-          </div>
-        </div>
-      </div>
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(160deg, #060a14 0%, #0a1628 40%, #0d1f3c 70%, #060a14 100%)",
+      fontFamily: "Georgia, serif",
+      overflowX: "hidden",
+    }}>
 
-      {/* Balance Bar */}
-      <div style={{
-        display: "flex",
-        gap: 12,
-        alignItems: "center",
-        marginBottom: 20,
-        flexWrap: "wrap",
-        justifyContent: "center",
+      {/* â”€â”€ TOP NAV â”€â”€ */}
+      <nav style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
         width: "100%",
-        maxWidth: 900,
+        background: "rgba(4,7,16,0.96)",
+        borderBottom: "1px solid rgba(201,168,76,0.2)",
+        backdropFilter: "blur(12px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 32px",
+        height: 60,
       }}>
         <div style={{
-          background: "rgba(0,0,0,0.5)",
-          border: "1px solid rgba(201,168,76,0.4)",
-          borderRadius: 10,
-          padding: "10px 20px",
-          textAlign: "center",
-          minWidth: 130,
+          fontSize: 20,
+          fontWeight: "bold",
+          letterSpacing: 4,
+          textTransform: "uppercase",
+          background: "linear-gradient(90deg, #8b6914, #f0d878, #c9a84c, #f0d878, #8b6914)",
+          backgroundSize: "200% auto",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          animation: "shimmer 3s linear infinite",
         }}>
-          <div style={{ fontSize: 10, color: "rgba(201,168,76,0.7)", letterSpacing: 2, textTransform: "uppercase" }}>Balance</div>
-          <div style={{ fontSize: 22, fontWeight: "bold", color: balance > 0 ? "#f0d878" : "#e74c3c" }}>
-            ${balance.toLocaleString('en-US')}
-          </div>
+          Royal Casino
         </div>
+        <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "rgba(201,168,76,0.5)", letterSpacing: 2 }}>GAMES</span>
+          <div style={{
+            width: 8, height: 8, borderRadius: "50%",
+            background: "#22c55e",
+            boxShadow: "0 0 8px #22c55e",
+            animation: "lobbyPulse 2s ease-in-out infinite",
+          }} />
+          <span style={{ fontSize: 11, color: "#22c55e", letterSpacing: 1 }}>LIVE</span>
+        </div>
+      </nav>
+
+      {/* â”€â”€ HERO â”€â”€ */}
+      <div style={{
+        position: "relative",
+        textAlign: "center",
+        padding: "80px 20px 60px",
+        overflow: "hidden",
+      }}>
+        {/* Decorative rings */}
+        <div style={{
+          position: "absolute", top: "50%", left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: 600, height: 600,
+          borderRadius: "50%",
+          border: "1px solid rgba(201,168,76,0.06)",
+          pointerEvents: "none",
+        }} />
+        <div style={{
+          position: "absolute", top: "50%", left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: 400, height: 400,
+          borderRadius: "50%",
+          border: "1px solid rgba(201,168,76,0.09)",
+          pointerEvents: "none",
+        }} />
 
         <div style={{
-          background: "rgba(0,0,0,0.5)",
-          border: "1px solid rgba(201,168,76,0.4)",
-          borderRadius: 10,
-          padding: "10px 20px",
-          textAlign: "center",
-          minWidth: 130,
+          display: "inline-block",
+          fontSize: 11,
+          letterSpacing: 6,
+          color: "rgba(201,168,76,0.7)",
+          textTransform: "uppercase",
+          border: "1px solid rgba(201,168,76,0.25)",
+          borderRadius: 20,
+          padding: "5px 18px",
+          marginBottom: 24,
         }}>
-          <div style={{ fontSize: 10, color: "rgba(201,168,76,0.7)", letterSpacing: 2, textTransform: "uppercase" }}>Total Bet</div>
-          <div style={{ fontSize: 22, fontWeight: "bold", color: totalBet > 0 ? "#f0c040" : "rgba(255,255,255,0.3)" }}>
-            ${totalBet.toLocaleString('en-US')}
-          </div>
+          Premium Online Casino
         </div>
 
-        {winningNumber !== null && !isSpinning && (
-          <div style={{
-            background: "rgba(0,0,0,0.5)",
-            border: "1px solid rgba(201,168,76,0.4)",
-            borderRadius: 10,
-            padding: "10px 20px",
+        <h1 style={{
+          fontSize: "clamp(40px, 7vw, 80px)",
+          fontWeight: "bold",
+          margin: "0 0 12px",
+          letterSpacing: 8,
+          textTransform: "uppercase",
+          background: "linear-gradient(90deg, #8b6914, #f0d878, #c9a84c, #f0d878, #8b6914)",
+          backgroundSize: "200% auto",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          animation: "shimmer 3s linear infinite",
+          lineHeight: 1.1,
+        }}>
+          Royal Casino
+        </h1>
+
+        <div style={{ height: 1, background: "linear-gradient(90deg, transparent, #c9a84c, transparent)", maxWidth: 400, margin: "0 auto 20px" }} />
+
+        <p style={{
+          fontSize: 15,
+          color: "rgba(240,230,200,0.5)",
+          letterSpacing: 3,
+          textTransform: "uppercase",
+          margin: 0,
+        }}>
+          Where Fortune Favours the Bold
+        </p>
+      </div>
+
+      {/* â”€â”€ STATS BAR â”€â”€ */}
+      <div style={{
+        display: "flex",
+        justifyContent: "center",
+        gap: 0,
+        maxWidth: 700,
+        margin: "0 auto 60px",
+        border: "1px solid rgba(201,168,76,0.15)",
+        borderRadius: 12,
+        overflow: "hidden",
+        background: "rgba(0,0,0,0.35)",
+      }}>
+        {[
+          { label: "Games Available", value: "1" },
+          { label: "Starting Balance", value: "$1,000" },
+          { label: "Max Payout", value: "35Ã—" },
+          { label: "House Edge", value: "2.7%" },
+        ].map(({ label, value }, i) => (
+          <div key={label} style={{
+            flex: 1,
+            padding: "16px 12px",
             textAlign: "center",
-            minWidth: 130,
+            borderRight: i < 3 ? "1px solid rgba(201,168,76,0.1)" : "none",
           }}>
-            <div style={{ fontSize: 10, color: "rgba(201,168,76,0.7)", letterSpacing: 2, textTransform: "uppercase" }}>Last</div>
-            <div style={{ fontSize: 22, fontWeight: "bold", color: "#f0d878" }}>{winningNumber}</div>
+            <div style={{ fontSize: 18, fontWeight: "bold", color: "#f0d878", marginBottom: 4 }}>{value}</div>
+            <div style={{ fontSize: 9, color: "rgba(201,168,76,0.5)", letterSpacing: 2, textTransform: "uppercase" }}>{label}</div>
           </div>
-        )}
-
-        <button
-          onClick={handleReset}
-          style={{
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.2)",
-            borderRadius: 8,
-            padding: "8px 16px",
-            color: "rgba(255,255,255,0.5)",
-            fontSize: 12,
-            cursor: "pointer",
-            letterSpacing: 1,
-          }}
-        >
-          Reset Game
-        </button>
+        ))}
       </div>
 
-      {/* Main layout */}
-      <div style={{
-        display: "flex",
-        gap: 24,
-        width: "100%",
-        maxWidth: 1200,
-        alignItems: "flex-start",
-        justifyContent: "center",
-        flexWrap: "wrap",
+      {/* â”€â”€ GAMES GRID â”€â”€ */}
+      <div style={{ padding: "0 32px 80px", maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ marginBottom: 32 }}>
+          <h2 style={{
+            fontSize: 11,
+            letterSpacing: 5,
+            color: "rgba(201,168,76,0.6)",
+            textTransform: "uppercase",
+            margin: "0 0 6px",
+          }}>
+            Casino Games
+          </h2>
+          <div style={{ height: 1, background: "linear-gradient(90deg, rgba(201,168,76,0.4), transparent)", marginBottom: 0 }} />
+        </div>
+
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+          gap: 20,
+        }}>
+          {GAMES.map((game) => (
+            <GameCardEl key={game.title} game={game} />
+          ))}
+        </div>
+      </div>
+
+      {/* â”€â”€ FOOTER â”€â”€ */}
+      <footer style={{
+        borderTop: "1px solid rgba(201,168,76,0.1)",
+        padding: "24px 32px",
+        textAlign: "center",
       }}>
-        {/* Left: Wheel */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-          <RouletteWheel ref={wheelRef} size={380} />
-
-          {/* Spin button */}
-          <button
-            onClick={handleSpin}
-            disabled={!canSpin}
-            style={{
-              width: 180,
-              height: 54,
-              borderRadius: 27,
-              background: canSpin
-                ? "linear-gradient(135deg, #c9a84c, #f0d878, #c9a84c)"
-                : "rgba(255,255,255,0.1)",
-              border: canSpin ? "2px solid #f0d878" : "2px solid rgba(255,255,255,0.1)",
-              color: canSpin ? "#1a1000" : "rgba(255,255,255,0.3)",
-              fontSize: 17,
-              fontWeight: "bold",
-              letterSpacing: 3,
-              textTransform: "uppercase",
-              cursor: canSpin ? "pointer" : "not-allowed",
-              boxShadow: canSpin ? "0 0 30px rgba(201,168,76,0.5), 0 6px 20px rgba(0,0,0,0.4)" : "none",
-              transition: "all 0.3s ease",
-            }}
-          >
-            {isSpinning ? "Spinning..." : "SPIN"}
-          </button>
-
-          {/* Bet controls */}
-          <div style={{ display: "flex", gap: 8 }}>
-            {[
-              { label: "Undo", onClick: handleUndoBet, disabled: isSpinning || bets.length === 0 },
-              { label: "Clear", onClick: handleClearBets, disabled: isSpinning || bets.length === 0 },
-              { label: "2×", onClick: handleDoubleBet, disabled: isSpinning || bets.length === 0 },
-              { label: "Rebet", onClick: handleRebet, disabled: isSpinning || lastBets.length === 0 },
-            ].map(({ label, onClick, disabled }) => (
-              <button
-                key={label}
-                onClick={onClick}
-                disabled={disabled}
-                style={{
-                  background: disabled ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 8,
-                  padding: "8px 14px",
-                  color: disabled ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.7)",
-                  fontSize: 12,
-                  cursor: disabled ? "not-allowed" : "pointer",
-                  letterSpacing: 1,
-                  transition: "all 0.2s ease",
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* History */}
-          <div style={{ width: 380 }}>
-            <RouletteHistory history={history} />
-          </div>
+        <div style={{
+          fontSize: 16,
+          fontWeight: "bold",
+          letterSpacing: 4,
+          background: "linear-gradient(90deg, #8b6914, #c9a84c, #8b6914)",
+          backgroundSize: "200% auto",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          marginBottom: 8,
+        }}>
+          Royal Casino
         </div>
-
-        {/* Right: Table */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16, flex: 1, minWidth: 320 }}>
-          {/* Chip selector */}
-          <div style={{
-            background: "rgba(0,0,0,0.4)",
-            border: "1px solid rgba(201,168,76,0.3)",
-            borderRadius: 12,
-            padding: "14px 16px",
-          }}>
-            <div style={{ fontSize: 11, color: "#c9a84c", letterSpacing: 2, marginBottom: 12, textTransform: "uppercase", textAlign: "center" }}>
-              Select Chip Value
-            </div>
-            <ChipSelector selected={selectedChip} onSelect={setSelectedChip} disabled={isSpinning} />
-          </div>
-
-          {/* Betting table */}
-          <BettingTable
-            bets={bets}
-            onBet={handleBet}
-            disabled={isSpinning}
-            selectedChip={selectedChip}
-            winningNumber={winningNumber}
-          />
-
-          {/* Active bets summary */}
-          {bets.length > 0 && (
-            <div style={{
-              background: "rgba(0,0,0,0.4)",
-              border: "1px solid rgba(201,168,76,0.2)",
-              borderRadius: 10,
-              padding: "12px 14px",
-            }}>
-              <div style={{ fontSize: 11, color: "#c9a84c", letterSpacing: 2, marginBottom: 8, textTransform: "uppercase" }}>
-                Active Bets ({bets.length})
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflowY: "auto" }}>
-                {bets.map((b, i) => (
-                  <div key={i} style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: 12,
-                    color: "rgba(255,255,255,0.8)",
-                    padding: "3px 6px",
-                    background: "rgba(255,255,255,0.03)",
-                    borderRadius: 4,
-                  }}>
-                    <span>{b.label}</span>
-                    <span style={{ color: "#f0d878" }}>${b.amount} → win ${b.amount * b.payout}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Payout guide */}
-          <div style={{
-            background: "rgba(0,0,0,0.3)",
-            border: "1px solid rgba(201,168,76,0.15)",
-            borderRadius: 10,
-            padding: "12px 14px",
-          }}>
-            <div style={{ fontSize: 11, color: "#c9a84c", letterSpacing: 2, marginBottom: 8, textTransform: "uppercase" }}>
-              Payout Guide
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
-              {[
-                ["Straight Up", "35:1"],
-                ["Column / Dozen", "2:1"],
-                ["Red/Black/Odd/Even", "1:1"],
-                ["1-18 / 19-36", "1:1"],
-              ].map(([name, payout]) => (
-                <div key={name} style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span>{name}</span>
-                  <span style={{ color: "#f0d878", fontWeight: "bold" }}>{payout}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", letterSpacing: 2, textTransform: "uppercase" }}>
+          For entertainment purposes only Â· No real money involved Â· Play responsibly
         </div>
-      </div>
-
-      {/* Win/Lose notification */}
-      {showNotification && lastResult && (
-        <WinNotification
-          winAmount={lastResult.win}
-          totalBet={lastResult.bet}
-          winningNumber={lastResult.number}
-          onClose={() => setShowNotification(false)}
-        />
-      )}
-
-      <div style={{ marginTop: 40, fontSize: 11, color: "rgba(255,255,255,0.2)", textAlign: "center", letterSpacing: 1 }}>
-        For entertainment purposes only · No real money involved
-      </div>
-
-      <AdminDashboard
+      </footer>
+      <AdminPanel
         isOpen={showAdmin}
         onClose={() => setShowAdmin(false)}
-        balance={balance}
-        isSpinning={isSpinning}
-        onSetBalance={handleSetBalance}
-        onSetForceNumber={setForceNextNumber}
-        forceNumber={forceNextNumber}
-        infiniteBalance={infiniteBalance}
-        onToggleInfiniteBalance={() => setInfiniteBalance((v) => !v)}
-        autoWin={autoWin}
-        onToggleAutoWin={() => setAutoWin((v) => !v)}
-        onClearHistory={handleClearHistory}
-        onResetGame={handleReset}
-        history={history}
-        bets={bets}
-      />
-    </main>
+        title="Lobby"
+        balance={lobbyBalance}
+        onSetBalance={(n) => { saveBalance(n); setLobbyBalance(n); }}
+      />    </div>
   );
+}
+
+function GameCardEl({ game }: { game: GameCard }) {
+  const content = (
+    <div style={{
+      position: "relative",
+      background: "rgba(0,0,0,0.5)",
+      border: `1px solid ${game.available ? "rgba(201,168,76,0.35)" : "rgba(255,255,255,0.06)"}`,
+      borderRadius: 16,
+      padding: "28px 24px",
+      cursor: game.available ? "pointer" : "default",
+      transition: "all 0.25s ease",
+      overflow: "hidden",
+      height: "100%",
+    }}
+    onMouseEnter={(e) => {
+      if (!game.available) return;
+      (e.currentTarget as HTMLDivElement).style.border = `1px solid rgba(201,168,76,0.7)`;
+      (e.currentTarget as HTMLDivElement).style.transform = "translateY(-4px)";
+      (e.currentTarget as HTMLDivElement).style.boxShadow = `0 20px 50px rgba(0,0,0,0.5), 0 0 30px ${game.color}22`;
+    }}
+    onMouseLeave={(e) => {
+      if (!game.available) return;
+      (e.currentTarget as HTMLDivElement).style.border = "1px solid rgba(201,168,76,0.35)";
+      (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)";
+      (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
+    }}
+    >
+      {/* Glow blob */}
+      {game.available && (
+        <div style={{
+          position: "absolute",
+          top: -40, right: -40,
+          width: 120, height: 120,
+          borderRadius: "50%",
+          background: `radial-gradient(circle, ${game.color}18, transparent 70%)`,
+          pointerEvents: "none",
+        }} />
+      )}
+
+      {/* Badge */}
+      <div style={{
+        position: "absolute",
+        top: 16, right: 16,
+        fontSize: 9,
+        letterSpacing: 1.5,
+        fontWeight: "bold",
+        textTransform: "uppercase",
+        padding: "3px 10px",
+        borderRadius: 10,
+        background: game.available ? "rgba(201,168,76,0.15)" : "rgba(255,255,255,0.05)",
+        border: `1px solid ${game.available ? "rgba(201,168,76,0.4)" : "rgba(255,255,255,0.1)"}`,
+        color: game.available ? "#f0d878" : "rgba(255,255,255,0.3)",
+      }}>
+        {game.badge}
+      </div>
+
+      {/* Icon */}
+      <div style={{
+        width: 60, height: 60, borderRadius: "50%",
+        background: game.available ? `${game.color}18` : "rgba(255,255,255,0.04)",
+        border: `2px solid ${game.available ? game.color + "44" : "rgba(255,255,255,0.08)"}`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 28, color: game.available ? game.color : "rgba(255,255,255,0.2)",
+        marginBottom: 16, flexShrink: 0,
+      }}>
+        {game.icon}
+      </div>
+
+      {/* Title */}
+      <h3 style={{
+        margin: "0 0 8px",
+        fontSize: 22,
+        fontWeight: "bold",
+        letterSpacing: 2,
+        textTransform: "uppercase",
+        color: game.available ? "#f0e6c8" : "rgba(255,255,255,0.25)",
+      }}>
+        {game.title}
+      </h3>
+
+      {/* Description */}
+      <p style={{
+        margin: "0 0 20px",
+        fontSize: 13,
+        color: game.available ? "rgba(240,230,200,0.55)" : "rgba(255,255,255,0.2)",
+        lineHeight: 1.6,
+      }}>
+        {game.description}
+      </p>
+
+      {/* CTA */}
+      {game.available ? (
+        <div style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          background: "linear-gradient(135deg, #c9a84c, #f0d878, #c9a84c)",
+          borderRadius: 8,
+          padding: "10px 22px",
+          fontSize: 12,
+          fontWeight: "bold",
+          letterSpacing: 2,
+          textTransform: "uppercase",
+          color: "#1a1000",
+        }}>
+          Play Now <span style={{ fontSize: 14 }}>›</span>
+        </div>
+      ) : (
+        <div style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 8,
+          padding: "10px 22px",
+          fontSize: 12,
+          letterSpacing: 2,
+          textTransform: "uppercase",
+          color: "rgba(255,255,255,0.2)",
+        }}>
+          Coming Soon
+        </div>
+      )}
+    </div>
+  );
+
+  if (game.available) {
+    return (
+      <Link href={game.href} style={{ textDecoration: "none", display: "flex", flexDirection: "column" }}>
+        {content}
+      </Link>
+    );
+  }
+  return <div style={{ display: "flex", flexDirection: "column" }}>{content}</div>;
 }
