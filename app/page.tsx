@@ -22,6 +22,7 @@ const GAMES: GameCard[] = [
   { title: "Slots", description: "Spin three reels and match symbols. How big can you win?", icon: "★", href: "/games/slots", available: true, badge: "NEW", color: "#f472b6" },
   { title: "Poker", description: "Video Poker - Jacks or Better. Hold your cards and draw to win.", icon: "♣", href: "/games/poker", available: true, badge: "NEW", color: "#a78bfa" },
   { title: "Crash", description: "Watch the multiplier rise - cash out before it crashes!", icon: "↗", href: "/games/crash", available: true, badge: "NEW", color: "#fb923c" },
+  { title: "Cases", description: "Open CS2-style cases and unbox rare items. Consumer to Covert!", icon: "📦", href: "/games/cases", available: true, badge: "NEW", color: "#a78bfa" },
 ];
 
 export default function Home() {
